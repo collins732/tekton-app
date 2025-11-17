@@ -1,0 +1,32 @@
+# Créer le fichier .gitignore
+New-Item -Path .gitignore -ItemType File
+```
+
+**Édite `.gitignore` et ajoute :**
+```
+# WebStorm
+.idea/
+
+# Next.js
+.next/
+out/
+build/
+dist/
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.production.local
+.env.development.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
