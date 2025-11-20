@@ -9,6 +9,7 @@ Platform automatisée de détection de vulnérabilités web pour applications et
 - **Marlene**
 - **collins**
 - **Marie**
+- **Walid**
 
 
 ---
