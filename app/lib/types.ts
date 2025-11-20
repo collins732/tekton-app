@@ -18,7 +18,7 @@ export interface TechnologyInfo {
 }
 
 export interface Vulnerability {
-  type: 'xss' | 'sqli' | 'info' | 'config';
+  type: 'xss' | 'sqli' | 'security-header' | 'info' | 'config'; // Added 'security-header'
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   description: string;

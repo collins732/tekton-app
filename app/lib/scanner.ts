@@ -4,6 +4,7 @@ import { scanPorts } from './scanners/port-scanner';
 import { detectTechnologies } from './scanners/tech-detector';
 import { scanXSS } from './scanners/xss-scanner';
 import { scanSQLi } from './scanners/sqli-scanner';
+import { scanSecurityHeaders } from './scanners/security-headers-scanner';
 
 /**
  * Orchestre l'exécution complète d'un scan
@@ -24,7 +25,7 @@ export async function executeScan(scanId: string, target: string): Promise<void>
       vulnerabilities: [],
     };
 
-    // Étape 1: Port Scanning (25%)
+    // Étape 1: Port Scanning (20%)
     updateScan(scanId, {
       currentStep: 'Scanning ports...',
       progress: 10,
@@ -33,25 +34,38 @@ export async function executeScan(scanId: string, target: string): Promise<void>
     results.ports = await scanPorts(target);
     updateScan(scanId, {
       results,
-      progress: 25,
+      progress: 20,
     });
 
-    // Étape 2: Technology Detection (50%)
+    // Étape 2: Technology Detection (40%)
     updateScan(scanId, {
       currentStep: 'Detecting technologies...',
-      progress: 30,
+      progress: 25,
     });
 
     results.technologies = await detectTechnologies(target);
     updateScan(scanId, {
       results,
-      progress: 50,
+      progress: 40,
     });
 
-    // Étape 3: XSS Scanning (75%)
+    // Étape 3: Security Headers Scanning (60%) - NEW!
+    updateScan(scanId, {
+      currentStep: 'Checking security headers...',
+      progress: 45,
+    });
+
+    const securityHeaderVulns = await scanSecurityHeaders(target);
+    results.vulnerabilities = [...(results.vulnerabilities || []), ...securityHeaderVulns];
+    updateScan(scanId, {
+      results,
+      progress: 60,
+    });
+
+    // Étape 4: XSS Scanning (75%)
     updateScan(scanId, {
       currentStep: 'Testing for XSS vulnerabilities...',
-      progress: 55,
+      progress: 65,
     });
 
     const xssVulns = await scanXSS(target);
@@ -61,10 +75,10 @@ export async function executeScan(scanId: string, target: string): Promise<void>
       progress: 75,
     });
 
-    // Étape 4: SQL Injection Scanning (100%)
+    // Étape 5: SQL Injection Scanning (100%)
     updateScan(scanId, {
       currentStep: 'Testing for SQL injection...',
-      progress: 80,
+      progress: 85,
     });
 
     const sqliVulns = await scanSQLi(target);
