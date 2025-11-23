@@ -1,0 +1,23 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -i https://glotelho.cm/api/admin/config)",
+      "Bash(curl:*)",
+      "Bash(npm run build:*)",
+      "Bash(node test-scanner.js:*)",
+      "Bash(node test-real-scan.js:*)",
+      "Bash(node test-multiple-sites.js:*)",
+      "Bash(node test-endpoint-discovery.js:*)",
+      "Bash(node test-auto-discovery-demo.js:*)",
+      "Bash(npm run dev)",
+      "Bash(node test-bank-site.js:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "Bash(xargs sed:*)",
+      "Bash(python remove-emojis.py:*)",
+      "Bash(python:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
