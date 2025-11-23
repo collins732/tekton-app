@@ -18,7 +18,7 @@ export interface TechnologyInfo {
 }
 
 export interface Vulnerability {
-  type: 'xss' | 'sqli' | 'info' | 'config' | 'auth' | 'access-control';
+  type: 'xss' | 'sqli' | 'security-header' | 'info' | 'config' | 'auth' | 'access-control';
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   description: string;
@@ -35,6 +35,7 @@ export interface ScanResult {
   progress: number;
   currentStep?: string;
   results: {
+    hiddenFiles?:  HiddenFileVulnerability[];
     ports?: PortScanResult[];
     technologies?: TechnologyInfo[];
     vulnerabilities?: Vulnerability[];
@@ -45,4 +46,16 @@ export interface ScanResult {
 export interface ScannerModule {
   name: string;
   scan: (target: string) => Promise<any>;
+}
+
+// Interface pour les fichiers sensibles/cachés exposés
+export interface HiddenFileVulnerability {
+  type: 'xss' | 'information_disclosure' | 'csrf' | 'sqli' | 'directory_traversal';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  description: string;
+  path: string;
+  status: number;
+  evidence: string;
+  recommendation?: string;
 }

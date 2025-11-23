@@ -2,183 +2,307 @@ import axios from 'axios';
 import { Vulnerability } from '../types';
 
 /**
- * SECURITY HEADERS SCANNER
+ * SECURITY HEADERS SCANNER - Version hybride
  *
- * Ce scanner trouve TOUJOURS des problèmes car presque aucun site
- * n'a TOUS les headers de sécurité recommandés.
- *
- * PARFAIT pour les présentations bancaires !
+ * Combine la validation approfondie avec des vérifications supplémentaires:
+ * - Headers de sécurité manquants ou mal configurés
+ * - Vérification HTTPS
+ * - Validation des cookies
  */
 
-interface SecurityHeader {
-  name: string;
-  description: string;
-  recommended: string;
-  severity: 'high' | 'medium' | 'low';
-}
-
-const SECURITY_HEADERS: SecurityHeader[] = [
-  {
-    name: 'Strict-Transport-Security',
-    description: 'Force HTTPS connections',
-    recommended: 'max-age=31536000; includeSubDomains',
-    severity: 'high',
-  },
-  {
+// Security headers to check
+const REQUIRED_HEADERS = {
+  'x-frame-options': {
     name: 'X-Frame-Options',
-    description: 'Prevent clickjacking attacks',
-    recommended: 'DENY or SAMEORIGIN',
-    severity: 'high',
+    severity: 'high' as const,
+    validValues: ['DENY', 'SAMEORIGIN'],
   },
-  {
-    name: 'X-Content-Type-Options',
-    description: 'Prevent MIME type sniffing',
-    recommended: 'nosniff',
-    severity: 'medium',
-  },
-  {
+  'content-security-policy': {
     name: 'Content-Security-Policy',
-    description: 'Prevent XSS and data injection',
-    recommended: "default-src 'self'",
-    severity: 'high',
+    severity: 'high' as const,
+    validValues: null, // Any CSP is better than none
   },
-  {
+  'strict-transport-security': {
+    name: 'Strict-Transport-Security',
+    severity: 'high' as const,
+    validValues: null, // Check for presence and min max-age
+  },
+  'x-content-type-options': {
+    name: 'X-Content-Type-Options',
+    severity: 'medium' as const,
+    validValues: ['nosniff'],
+  },
+  'x-xss-protection': {
     name: 'X-XSS-Protection',
-    description: 'Enable browser XSS filter',
-    recommended: '1; mode=block',
-    severity: 'medium',
+    severity: 'low' as const,
+    validValues: ['1', '1; mode=block'],
   },
-  {
+  'referrer-policy': {
     name: 'Referrer-Policy',
-    description: 'Control referrer information',
-    recommended: 'no-referrer or strict-origin-when-cross-origin',
-    severity: 'low',
+    severity: 'low' as const,
+    validValues: null, // Any policy is better than none
   },
-  {
+  'permissions-policy': {
     name: 'Permissions-Policy',
-    description: 'Control browser features',
-    recommended: 'geolocation=(), microphone=(), camera=()',
-    severity: 'medium',
+    severity: 'low' as const,
+    validValues: null,
   },
-];
+};
 
-export async function scanSecurityHeaders(target: string): Promise<Vulnerability[]> {
+/**
+ * Scanne les headers de sécurité manquants ou mal configurés
+ */
+export async function scanSecurityHeaders(target: string, verbose: boolean = false): Promise<Vulnerability[]> {
   const vulnerabilities: Vulnerability[] = [];
 
-  console.log('\n[Security Headers] Starting scan...');
+  if (verbose) {
+    console.log('\n[Security Headers] Starting scan...');
+  }
 
   try {
-    const response = await axios.get(target, {
+    // Faire une requête HEAD pour récupérer les headers (plus efficace)
+    const response = await axios.head(target, {
       timeout: 10000,
-      validateStatus: () => true,
       headers: { 'User-Agent': 'VulnScanner/2.0' },
+      maxRedirects: 5,
+      validateStatus: () => true, // Ne pas rejeter les erreurs HTTP
     });
 
-    console.log(`   [OK] Target responded with status ${response.status}`);
-    console.log('   [INFO] Checking security headers...');
+    const headers = response.headers;
 
-    let missingCount = 0;
-    let weakCount = 0;
+    if (verbose) {
+      console.log(`   [OK] Target responded with status ${response.status}`);
+      console.log('   [INFO] Checking security headers...');
+    }
 
-    for (const header of SECURITY_HEADERS) {
-      const headerValue = response.headers[header.name.toLowerCase()];
+    // Vérifier X-Frame-Options
+    const xFrameOptions = headers['x-frame-options'];
+    if (!xFrameOptions) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'high',
+        title: 'Missing X-Frame-Options Header',
+        description: 'The X-Frame-Options header is not set. This makes the site vulnerable to clickjacking attacks where an attacker can embed the page in an iframe.',
+        location: target,
+        evidence: 'Header: X-Frame-Options is missing\nRecommendation: Add "X-Frame-Options: DENY" or "X-Frame-Options: SAMEORIGIN"',
+      });
+      if (verbose) console.log('   [MISSING] X-Frame-Options');
+    } else if (!['DENY', 'SAMEORIGIN'].includes(xFrameOptions.toUpperCase())) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'medium',
+        title: 'Weak X-Frame-Options Configuration',
+        description: `The X-Frame-Options header is set to "${xFrameOptions}" which may not provide adequate protection against clickjacking.`,
+        location: target,
+        evidence: `Current value: ${xFrameOptions}\nRecommendation: Use "DENY" or "SAMEORIGIN"`,
+      });
+      if (verbose) console.log(`   [WEAK] X-Frame-Options = ${xFrameOptions}`);
+    } else if (verbose) {
+      console.log(`   [OK] Present: X-Frame-Options = ${xFrameOptions}`);
+    }
 
-      if (!headerValue) {
-        // Header complètement manquant
-        vulnerabilities.push({
-          type: 'config',
-          severity: header.severity,
-          title: `Missing Security Header: ${header.name}`,
-          description: `The HTTP response does not include the "${header.name}" security header. ${header.description}. This leaves the application vulnerable to various attacks.`,
-          location: target,
-          evidence: `Header "${header.name}" is missing\nRecommended: ${header.recommended}`,
-        });
+    // Vérifier Content-Security-Policy
+    const csp = headers['content-security-policy'];
+    if (!csp) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'high',
+        title: 'Missing Content-Security-Policy Header',
+        description: 'The Content-Security-Policy (CSP) header is missing. CSP helps prevent XSS attacks, clickjacking, and other code injection attacks.',
+        location: target,
+        evidence: 'Header: Content-Security-Policy is missing\nRecommendation: Implement a CSP policy appropriate for your application',
+      });
+      if (verbose) console.log('   [MISSING] Content-Security-Policy');
+    } else if (csp.includes('unsafe-inline') || csp.includes('unsafe-eval')) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'medium',
+        title: 'Weak Content-Security-Policy Configuration',
+        description: 'The CSP header contains "unsafe-inline" or "unsafe-eval" which weakens XSS protection.',
+        location: target,
+        evidence: `Current CSP: ${csp}\nRecommendation: Remove "unsafe-inline" and "unsafe-eval" directives`,
+      });
+      if (verbose) console.log('   [WEAK] CSP allows unsafe-inline or unsafe-eval');
+    } else if (verbose) {
+      console.log(`   [OK] Present: Content-Security-Policy`);
+    }
 
-        console.log(`   [MISSING] ${header.name}`);
-        missingCount++;
-      } else {
-        // Header présent mais vérifier s'il est faible
-        console.log(`   [OK] Present: ${header.name} = ${headerValue}`);
-
-        // Vérifications supplémentaires pour certains headers
-        if (header.name === 'Strict-Transport-Security' && !headerValue.includes('max-age')) {
+    // Vérifier Strict-Transport-Security (HSTS)
+    const hsts = headers['strict-transport-security'];
+    if (!hsts) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'high',
+        title: 'Missing Strict-Transport-Security Header',
+        description: 'The Strict-Transport-Security (HSTS) header is missing. This header forces browsers to use HTTPS and prevents protocol downgrade attacks.',
+        location: target,
+        evidence: 'Header: Strict-Transport-Security is missing\nRecommendation: Add "Strict-Transport-Security: max-age=31536000; includeSubDomains; preload"',
+      });
+      if (verbose) console.log('   [MISSING] Strict-Transport-Security');
+    } else {
+      // Vérifier si max-age est suffisant (au moins 6 mois = 15768000 secondes)
+      const maxAgeMatch = hsts.match(/max-age=(\d+)/);
+      if (maxAgeMatch) {
+        const maxAge = parseInt(maxAgeMatch[1]);
+        if (maxAge < 15768000) { // Moins de 6 mois
           vulnerabilities.push({
-            type: 'config',
+            type: 'security-header',
             severity: 'medium',
-            title: `Weak Security Header: ${header.name}`,
-            description: `The HSTS header is present but does not specify a max-age directive, reducing its effectiveness.`,
+            title: 'Weak HSTS Configuration',
+            description: `The HSTS max-age is set to ${maxAge} seconds, which is less than the recommended 6 months (15768000 seconds).`,
             location: target,
-            evidence: `Current value: ${headerValue}\nRecommended: ${header.recommended}`,
+            evidence: `Current value: ${hsts}\nRecommendation: Increase max-age to at least 31536000 (1 year)`,
           });
-          weakCount++;
+          if (verbose) console.log(`   [WEAK] HSTS max-age too low: ${maxAge}s`);
+        } else if (verbose) {
+          console.log(`   [OK] Present: Strict-Transport-Security = ${hsts}`);
         }
-
-        if (header.name === 'Content-Security-Policy' && headerValue.includes('unsafe-inline')) {
-          vulnerabilities.push({
-            type: 'config',
-            severity: 'medium',
-            title: `Weak Content Security Policy`,
-            description: `The CSP header allows 'unsafe-inline', which reduces protection against XSS attacks.`,
-            location: target,
-            evidence: `Current value: ${headerValue}\nSuggestion: Remove 'unsafe-inline' directive`,
-          });
-          weakCount++;
-        }
+      } else if (verbose) {
+        console.log(`   [OK] Present: Strict-Transport-Security = ${hsts}`);
       }
     }
+
+    // Vérifier X-Content-Type-Options
+    const xContentType = headers['x-content-type-options'];
+    if (!xContentType || xContentType.toLowerCase() !== 'nosniff') {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'medium',
+        title: 'Missing X-Content-Type-Options Header',
+        description: 'The X-Content-Type-Options header is missing or not set to "nosniff". This allows browsers to MIME-sniff responses, potentially leading to security issues.',
+        location: target,
+        evidence: `Current value: ${xContentType || 'missing'}\nRecommendation: Add "X-Content-Type-Options: nosniff"`,
+      });
+      if (verbose) console.log('   [MISSING] X-Content-Type-Options');
+    } else if (verbose) {
+      console.log(`   [OK] Present: X-Content-Type-Options = ${xContentType}`);
+    }
+
+    // Vérifier X-XSS-Protection
+    const xssProtection = headers['x-xss-protection'];
+    if (!xssProtection) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'low',
+        title: 'Missing X-XSS-Protection Header',
+        description: 'The X-XSS-Protection header is missing. While deprecated in modern browsers, it still provides protection for legacy browsers.',
+        location: target,
+        evidence: 'Header: X-XSS-Protection is missing\nRecommendation: Add "X-XSS-Protection: 1; mode=block"',
+      });
+      if (verbose) console.log('   [MISSING] X-XSS-Protection');
+    } else if (verbose) {
+      console.log(`   [OK] Present: X-XSS-Protection = ${xssProtection}`);
+    }
+
+    // Vérifier Referrer-Policy
+    const referrerPolicy = headers['referrer-policy'];
+    if (!referrerPolicy) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'low',
+        title: 'Missing Referrer-Policy Header',
+        description: 'The Referrer-Policy header is missing. This may leak sensitive information through the Referer header.',
+        location: target,
+        evidence: 'Header: Referrer-Policy is missing\nRecommendation: Add "Referrer-Policy: no-referrer" or "strict-origin-when-cross-origin"',
+      });
+      if (verbose) console.log('   [MISSING] Referrer-Policy');
+    } else if (['unsafe-url', 'no-referrer-when-downgrade'].includes(referrerPolicy.toLowerCase())) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'low',
+        title: 'Weak Referrer-Policy Configuration',
+        description: `The Referrer-Policy is set to "${referrerPolicy}" which may leak sensitive information in URLs.`,
+        location: target,
+        evidence: `Current value: ${referrerPolicy}\nRecommendation: Use "no-referrer" or "strict-origin-when-cross-origin"`,
+      });
+      if (verbose) console.log(`   [WEAK] Referrer-Policy = ${referrerPolicy}`);
+    } else if (verbose) {
+      console.log(`   [OK] Present: Referrer-Policy = ${referrerPolicy}`);
+    }
+
+    // Vérifier Permissions-Policy
+    const permissionsPolicy = headers['permissions-policy'];
+    const featurePolicy = headers['feature-policy'];
+    if (!permissionsPolicy && !featurePolicy) {
+      vulnerabilities.push({
+        type: 'security-header',
+        severity: 'low',
+        title: 'Missing Permissions-Policy Header',
+        description: 'The Permissions-Policy header is missing. This header controls which browser features and APIs can be used.',
+        location: target,
+        evidence: 'Header: Permissions-Policy is missing\nRecommendation: Add Permissions-Policy to restrict unnecessary features (camera, microphone, geolocation, etc.)',
+      });
+      if (verbose) console.log('   [MISSING] Permissions-Policy');
+    } else if (verbose) {
+      console.log(`   [OK] Present: Permissions-Policy or Feature-Policy`);
+    }
+
+    // === VÉRIFICATIONS SUPPLÉMENTAIRES ===
 
     // Vérifier HTTPS
     if (!target.startsWith('https://')) {
       vulnerabilities.push({
-        type: 'config',
+        type: 'security-header',
         severity: 'high',
         title: 'Insecure HTTP Connection',
         description: 'The application is accessed over HTTP instead of HTTPS. This exposes all traffic to potential interception and manipulation.',
         location: target,
         evidence: 'URL scheme: http:// (should be https://)',
       });
-      console.log('   [CRITICAL] Site not using HTTPS!');
+      if (verbose) console.log('   [CRITICAL] Site not using HTTPS!');
     }
 
-    // Vérifier les cookies
-    const cookies = response.headers['set-cookie'];
-    if (cookies) {
-      for (const cookie of cookies) {
-        if (!cookie.includes('Secure')) {
-          vulnerabilities.push({
-            type: 'config',
-            severity: 'medium',
-            title: 'Cookie Missing Secure Flag',
-            description: 'Session cookies do not have the Secure flag set, allowing them to be transmitted over insecure HTTP connections.',
-            location: target,
-            evidence: `Cookie: ${cookie.substring(0, 50)}...`,
-          });
-          console.log('   [WARNING] Cookie without Secure flag detected');
-        }
+    // Vérifier les cookies (nécessite une requête GET pour récupérer les cookies)
+    // On fait une requête GET uniquement si on veut vérifier les cookies
+    try {
+      const cookieResponse = await axios.get(target, {
+        timeout: 5000,
+        headers: { 'User-Agent': 'VulnScanner/2.0' },
+        maxRedirects: 5,
+        validateStatus: () => true,
+      });
 
-        if (!cookie.includes('HttpOnly')) {
-          vulnerabilities.push({
-            type: 'config',
-            severity: 'medium',
-            title: 'Cookie Missing HttpOnly Flag',
-            description: 'Session cookies do not have the HttpOnly flag set, making them accessible to JavaScript and vulnerable to XSS attacks.',
-            location: target,
-            evidence: `Cookie: ${cookie.substring(0, 50)}...`,
-          });
-          console.log('   [WARNING] Cookie without HttpOnly flag detected');
+      const cookies = cookieResponse.headers['set-cookie'];
+      if (cookies) {
+        for (const cookie of cookies) {
+          if (!cookie.includes('Secure')) {
+            vulnerabilities.push({
+              type: 'security-header',
+              severity: 'medium',
+              title: 'Cookie Missing Secure Flag',
+              description: 'Session cookies do not have the Secure flag set, allowing them to be transmitted over insecure HTTP connections.',
+              location: target,
+              evidence: `Cookie: ${cookie.substring(0, 50)}...`,
+            });
+            if (verbose) console.log('   [WARNING] Cookie without Secure flag detected');
+          }
+
+          if (!cookie.includes('HttpOnly')) {
+            vulnerabilities.push({
+              type: 'security-header',
+              severity: 'medium',
+              title: 'Cookie Missing HttpOnly Flag',
+              description: 'Session cookies do not have the HttpOnly flag set, making them accessible to JavaScript and vulnerable to XSS attacks.',
+              location: target,
+              evidence: `Cookie: ${cookie.substring(0, 50)}...`,
+            });
+            if (verbose) console.log('   [WARNING] Cookie without HttpOnly flag detected');
+          }
         }
       }
+    } catch (cookieError) {
+      // Si la requête GET échoue, ce n'est pas grave, on continue sans vérifier les cookies
+      if (verbose) console.log('   [INFO] Could not verify cookies');
     }
 
-    console.log(`\n   [SUMMARY]`);
-    console.log(`      Missing headers: ${missingCount}`);
-    console.log(`      Weak headers: ${weakCount}`);
-    console.log(`      Total issues: ${vulnerabilities.length}`);
+    if (verbose) {
+      console.log(`\n   [SUMMARY] Security Headers scan completed: ${vulnerabilities.length} issues found\n`);
+    }
 
   } catch (error) {
-    console.error('   [ERROR] Error scanning security headers:', error);
+    console.error('Error scanning security headers:', error);
+    // En cas d'erreur, on n'ajoute pas de vulnérabilité
   }
 
-  console.log(`\n   [COMPLETED] Security Headers scan completed: ${vulnerabilities.length} issues found\n`);
   return vulnerabilities;
 }

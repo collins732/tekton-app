@@ -1,10 +1,10 @@
-'use client';
+"use client";
 
-import { useState, useEffect, useRef } from 'react';
-import { ScanResult } from './lib/types';
+import { useState, useEffect, useRef } from "react";
+import { ScanResult } from "./lib/types";
 
 export default function Home() {
-  const [url, setUrl] = useState('');
+  const [url, setUrl] = useState("");
   const [scanning, setScanning] = useState(false);
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
@@ -17,19 +17,25 @@ export default function Home() {
     }
   }, [terminalOutput]);
 
-  const addOutput = (text: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
+  const addOutput = (
+    text: string,
+    type: "info" | "success" | "error" | "warning" = "info"
+  ) => {
     const colors = {
-      info: '#e8e8e8',
-      success: '#00ff00',
-      error: '#ff0055',
-      warning: '#8b5cf6',
+      info: "#e8e8e8",
+      success: "#00ff00",
+      error: "#ff0055",
+      warning: "#8b5cf6",
     };
-    setTerminalOutput(prev => [...prev, `<span style="color: ${colors[type]}">${text}</span>`]);
+    setTerminalOutput((prev) => [
+      ...prev,
+      `<span style="color: ${colors[type]}">${text}</span>`,
+    ]);
   };
 
   const startScan = async () => {
     if (!url) {
-      addOutput('[ERROR] Please enter a valid URL', 'error');
+      addOutput("[ERROR] Please enter a valid URL", "error");
       return;
     }
 
@@ -37,25 +43,34 @@ export default function Home() {
     setScanResult(null);
     setTerminalOutput([]);
 
-    addOutput('╔══════════════════════════════════════════════════════╗', 'warning');
-    addOutput('║            TEKTON VULNERABILITY SCANNER              ║', 'warning');
-    addOutput('╚══════════════════════════════════════════════════════╝', 'warning');
-    addOutput('');
-    addOutput(`[*] Target: ${url}`, 'info');
-    addOutput('[*] Initializing scan...', 'info');
+    addOutput(
+      "╔══════════════════════════════════════════════════════╗",
+      "warning"
+    );
+    addOutput(
+      "║            TEKTON VULNERABILITY SCANNER              ║",
+      "warning"
+    );
+    addOutput(
+      "╚══════════════════════════════════════════════════════╝",
+      "warning"
+    );
+    addOutput("");
+    addOutput(`[*] Target: ${url}`, "info");
+    addOutput("[*] Initializing scan...", "info");
 
     try {
       // Lancer le scan
-      const response = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
 
       const { scanId } = await response.json();
-      addOutput(`[+] Scan ID: ${scanId}`, 'success');
-      addOutput('[*] Scan started successfully', 'success');
-      addOutput('');
+      addOutput(`[+] Scan ID: ${scanId}`, "success");
+      addOutput("[*] Scan started successfully", "success");
+      addOutput("");
 
       // Polling pour suivre la progression
       const interval = setInterval(async () => {
@@ -63,80 +78,117 @@ export default function Home() {
         const scan: ScanResult = await statusResponse.json();
 
         if (scan.currentStep) {
-          addOutput(`[${scan.progress}%] ${scan.currentStep}`, 'warning');
+          addOutput(`[${scan.progress}%] ${scan.currentStep}`, "warning");
         }
 
-        if (scan.status === 'completed' || scan.status === 'failed') {
+        if (scan.status === "completed" || scan.status === "failed") {
           clearInterval(interval);
           setScanning(false);
           setScanResult(scan);
 
-          if (scan.status === 'completed') {
-            addOutput('');
-            addOutput('═══════════════════ SCAN COMPLETED ═══════════════════', 'success');
+          if (scan.status === "completed") {
+            addOutput("");
+            addOutput(
+              "═══════════════════ SCAN COMPLETED ═══════════════════",
+              "success"
+            );
             displayResults(scan);
           } else {
-            addOutput('');
-            addOutput('[!] Scan failed: ' + scan.error, 'error');
+            addOutput("");
+            addOutput("[!] Scan failed: " + scan.error, "error");
           }
         }
       }, 2000);
-
     } catch (error) {
-      addOutput('[!] Error: ' + (error as Error).message, 'error');
+      addOutput("[!] Error: " + (error as Error).message, "error");
       setScanning(false);
     }
   };
 
   const displayResults = (scan: ScanResult) => {
-    addOutput('');
+    addOutput("");
 
     // Ports
     if (scan.results.ports && scan.results.ports.length > 0) {
-      addOutput('▼ OPEN PORTS', 'warning');
-      scan.results.ports.forEach(port => {
-        addOutput(`  ├─ Port ${port.port} (${port.service})`, 'success');
+      addOutput("▼ OPEN PORTS", "warning");
+      scan.results.ports.forEach((port) => {
+        addOutput(`  ├─ Port ${port.port} (${port.service})`, "success");
       });
-      addOutput('');
+      addOutput("");
     }
 
     // Technologies
     if (scan.results.technologies && scan.results.technologies.length > 0) {
-      addOutput('▼ TECHNOLOGIES DETECTED', 'warning');
-      scan.results.technologies.forEach(tech => {
-        const version = tech.version ? ` v${tech.version}` : '';
-        addOutput(`  ├─ ${tech.name}${version} [${tech.category}]`, 'info');
+      addOutput("▼ TECHNOLOGIES DETECTED", "warning");
+      scan.results.technologies.forEach((tech) => {
+        const version = tech.version ? ` v${tech.version}` : "";
+        addOutput(`  ├─ ${tech.name}${version} [${tech.category}]`, "info");
       });
-      addOutput('');
+      addOutput("");
+    }
+    //hidden Files
+    if (scan.results.hiddenFiles && scan.results.hiddenFiles.length > 0) {
+      addOutput("▼ EXPOSED HIDDEN FILES", "error");
+      addOutput("");
+      scan.results.hiddenFiles.forEach((file, index) => {
+        const severityColor = {
+          critical: "#ff0055",
+          high: "#ff6b6b",
+          medium: "#ffd93d",
+          low: "#a0d2db",
+        }[file.severity];
+
+        addOutput(`  [${index + 1}] ${file.title}`, "error");
+        addOutput(
+          `      Severity: <span style="color: ${severityColor}; font-weight: bold">${file.severity.toUpperCase()}</span>`,
+          "error"
+        );
+        addOutput(`Path: ${file.path}`, "warning");
+        addOutput(`Description: ${file.description}`, "info");
+        addOutput(`Evidence: ${file.evidence}`, "info");
+        addOutput(`Recommendation: ${file.recommendation}`, "info");
+        addOutput("");
+      });
+    } else {
+      addOutput("[+] No HiddenFIles found!", "success");
     }
 
     // Vulnérabilités
-    if (scan.results.vulnerabilities && scan.results.vulnerabilities.length > 0) {
-      addOutput('▼ VULNERABILITIES FOUND', 'error');
-      addOutput('');
+    if (
+      scan.results.vulnerabilities &&
+      scan.results.vulnerabilities.length > 0
+    ) {
+      addOutput("▼ VULNERABILITIES FOUND", "error");
+      addOutput("");
       scan.results.vulnerabilities.forEach((vuln, index) => {
         const severityColor = {
-          critical: '#ff0055',
-          high: '#ff6b6b',
-          medium: '#ffd93d',
-          low: '#a0d2db',
-          info: '#e8e8e8',
+          critical: "#ff0055",
+          high: "#ff6b6b",
+          medium: "#ffd93d",
+          low: "#a0d2db",
+          info: "#e8e8e8",
         }[vuln.severity];
 
-        addOutput(`  [${index + 1}] ${vuln.title}`, 'error');
-        addOutput(`      Severity: <span style="color: ${severityColor}; font-weight: bold">${vuln.severity.toUpperCase()}</span>`, 'error');
-        addOutput(`      Type: ${vuln.type.toUpperCase()}`, 'info');
-        addOutput(`      Description: ${vuln.description}`, 'info');
+        addOutput(`  [${index + 1}] ${vuln.title}`, "error");
+        addOutput(
+          `      Severity: <span style="color: ${severityColor}; font-weight: bold">${vuln.severity.toUpperCase()}</span>`,
+          "error"
+        );
+        addOutput(`      Type: ${vuln.type.toUpperCase()}`, "info");
+        addOutput(`      Description: ${vuln.description}`, "info");
         if (vuln.location) {
-          addOutput(`      Location: ${vuln.location}`, 'info');
+          addOutput(`      Location: ${vuln.location}`, "info");
         }
-        addOutput('');
+        addOutput("");
       });
     } else {
-      addOutput('[+] No vulnerabilities found!', 'success');
+      addOutput("[+] No vulnerabilities found!", "success");
     }
 
-    addOutput('═══════════════════════════════════════════════════════', 'success');
+    addOutput(
+      "═══════════════════════════════════════════════════════",
+      "success"
+    );
   };
 
   return (
@@ -147,12 +199,14 @@ export default function Home() {
           ╔══════════════════════════╗
         </h1>
         <h1 className="text-5xl font-bold mb-2 glow-purple">
-          ║  TEKTON SCANNER  ║
+          ║ TEKTON SCANNER ║
         </h1>
         <h1 className="text-5xl font-bold mb-4 glow-purple">
           ╚══════════════════════════╝
         </h1>
-        <p className="text-sm opacity-70">Automated Web Vulnerability Scanner</p>
+        <p className="text-sm opacity-70">
+          Automated Web Vulnerability Scanner
+        </p>
       </div>
 
       {/* Input Section */}
@@ -166,7 +220,7 @@ export default function Home() {
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && !scanning && startScan()}
+              onKeyPress={(e) => e.key === "Enter" && !scanning && startScan()}
               placeholder="http://example.com"
               disabled={scanning}
               className="flex-1 bg-black border-2 border-purple-600 text-green-400 px-4 py-3
@@ -180,7 +234,7 @@ export default function Home() {
                        disabled:cursor-not-allowed border-2 border-purple-400
                        font-bold transition-all glow-purple"
             >
-              {scanning ? '[SCANNING...]' : '[SCAN]'}
+              {scanning ? "[SCANNING...]" : "[SCAN]"}
             </button>
           </div>
         </div>
@@ -208,7 +262,9 @@ export default function Home() {
               <div className="text-gray-500 flex flex-col items-center justify-center h-full">
                 <span className="text-6xl mb-4">⚡</span>
                 <span>Waiting for scan to start...</span>
-                <span className="text-xs mt-2 opacity-50">Enter a URL and click [SCAN]</span>
+                <span className="text-xs mt-2 opacity-50">
+                  Enter a URL and click [SCAN]
+                </span>
               </div>
             ) : (
               terminalOutput.map((line, index) => (
@@ -228,7 +284,10 @@ export default function Home() {
 
       {/* Footer */}
       <div className="mt-8 text-center text-xs opacity-50">
-        <p>⚠ For educational purposes only. Do not scan websites without permission.</p>
+        <p>
+          ⚠ For educational purposes only. Do not scan websites without
+          permission.
+        </p>
         <p className="mt-2">Master 2 - Cloud Computing Project</p>
       </div>
     </div>
