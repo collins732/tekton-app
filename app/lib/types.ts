@@ -35,6 +35,7 @@ export interface ScanResult {
   progress: number;
   currentStep?: string;
   results: {
+    hiddenFiles?:  HiddenFileVulnerability[];
     ports?: PortScanResult[];
     technologies?: TechnologyInfo[];
     vulnerabilities?: Vulnerability[];
@@ -45,4 +46,16 @@ export interface ScanResult {
 export interface ScannerModule {
   name: string;
   scan: (target: string) => Promise<any>;
+}
+
+// src/types/index.ts
+export interface HiddenFileVulnerability {
+  type: 'xss' | 'information_disclosure' | 'csrf' | 'sqli' | 'directory_traversal';
+  severity: 'low' | 'medium' | 'high' | 'critical';
+  title: string;
+  description: string;
+  path: string;
+  status: number;
+  evidence: string;
+  recommendation?: string; // Added for better reporting
 }

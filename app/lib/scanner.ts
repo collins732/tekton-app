@@ -4,6 +4,7 @@ import { scanPorts } from './scanners/port-scanner';
 import { detectTechnologies } from './scanners/tech-detector';
 import { scanXSS } from './scanners/xss-scanner';
 import { scanSQLi } from './scanners/sqli-scanner';
+import { scanHiddenFiles } from './scanners/sensitive-file-scanner';
 import { scanSecurityHeaders } from './scanners/security-headers-scanner';
 
 /**
@@ -49,7 +50,7 @@ export async function executeScan(scanId: string, target: string): Promise<void>
       progress: 40,
     });
 
-    // Étape 3: Security Headers Scanning (60%) - NEW!
+    // Étape 3: Security Headers Scanning (50%)
     updateScan(scanId, {
       currentStep: 'Checking security headers...',
       progress: 45,
@@ -59,10 +60,26 @@ export async function executeScan(scanId: string, target: string): Promise<void>
     results.vulnerabilities = [...(results.vulnerabilities || []), ...securityHeaderVulns];
     updateScan(scanId, {
       results,
+      progress: 50,
+    });
+
+    // Étape 4: Hidden Files Scanning (60%)
+    updateScan(scanId, {
+      currentStep: 'Scanning for sensitive files...',
+      progress: 52,
+    });
+
+    results.hiddenFiles = await scanHiddenFiles(target, {
+      verbose: false,
+      concurrency: 30,
+      includeBackupVariations: false  // Désactive les 546 variations de backup
+    });
+    updateScan(scanId, {
+      results,
       progress: 60,
     });
 
-    // Étape 4: XSS Scanning (75%)
+    // Étape 5: XSS Scanning (75%)
     updateScan(scanId, {
       currentStep: 'Testing for XSS vulnerabilities...',
       progress: 65,
@@ -75,7 +92,7 @@ export async function executeScan(scanId: string, target: string): Promise<void>
       progress: 75,
     });
 
-    // Étape 5: SQL Injection Scanning (100%)
+    // Étape 6: SQL Injection Scanning (100%)
     updateScan(scanId, {
       currentStep: 'Testing for SQL injection...',
       progress: 85,
