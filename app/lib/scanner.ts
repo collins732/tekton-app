@@ -11,10 +11,10 @@ import { scanSecurityHeaders } from './scanners/security-headers-scanner';
 /**
  * Orchestre l'exécution complète d'un scan
  */
-export async function executeScan(scanId: string, target: string): Promise<void> {
+export async function executeScan(scanId: string, target: string, userId: string = 'default_user', cost: number = 0): Promise<void> {
   try {
     // Initialiser le scan
-    createScan(scanId, target);
+    createScan(scanId, target, userId, cost);
     updateScan(scanId, {
       status: 'running',
       currentStep: 'Initialisation...',
