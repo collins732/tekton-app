@@ -18,7 +18,7 @@ export interface TechnologyInfo {
 }
 
 export interface Vulnerability {
-  type: 'xss' | 'sqli' | 'security-header' | 'info' | 'config' | 'auth' | 'access-control';
+  type: 'xss' | 'sqli' | 'security-header' | 'info' | 'config' | 'auth' | 'access-control' | 'ssrf' | 'lfi' | 'rfi' | 'xxe' | 'command-injection' | 'auth-bypass' | 'sensitive-data' | 'idor';
   severity: 'critical' | 'high' | 'medium' | 'low' | 'info';
   title: string;
   description: string;
@@ -39,6 +39,7 @@ export interface ScanResult {
     ports?: PortScanResult[];
     technologies?: TechnologyInfo[];
     vulnerabilities?: Vulnerability[];
+    discoveredEndpoints?: string[]; // URLs discovered during crawl
   };
   error?: string;
 }

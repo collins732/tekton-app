@@ -3,6 +3,7 @@ import * as cheerio from 'cheerio';
 import { Vulnerability } from '../types';
 import { discoverEndpoints } from './endpoint-discovery';
 import { discoverParameters, generateTestUrls, summarizeParameters } from './parameter-discovery';
+import { browserGet, browserPost, isCloudflareBlocked, resetSession } from './http-client';
 
 // ============================================================================
 // SQL INJECTION SCANNER - OWASP A03:2021 (Injection)
@@ -122,7 +123,11 @@ export async function scanSQLi(target: string): Promise<Vulnerability[]> {
   const vulnerabilities: Vulnerability[] = [];
 
   console.log('\n[SQLi] Starting SQL Injection scan...');
+  console.log('   [INFO] Using browser-like requests to bypass WAF...');
   console.log('   [INFO] Discovering all endpoints and parameters automatically...');
+
+  // Reset session pour ce scan
+  resetSession();
 
   try {
     // [OK] ÉTAPE 1: Découvrir TOUS les endpoints du site
@@ -173,20 +178,21 @@ export async function scanSQLi(target: string): Promise<Vulnerability[]> {
 
           let response;
           if (testRequest.method === 'POST' && testRequest.data) {
-            response = await axios.post(testRequest.url, testRequest.data, {
-              timeout: 5000,
-              validateStatus: () => true,
-              headers: {
-                'User-Agent': 'VulnScanner/2.0',
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
+            response = await browserPost(testRequest.url, testRequest.data as Record<string, string>, {
+              referer: param.url,
+              addDelay: true,
             });
           } else {
-            response = await axios.get(testRequest.url, {
-              timeout: 5000,
-              validateStatus: () => true,
-              headers: { 'User-Agent': 'VulnScanner/2.0' },
+            response = await browserGet(testRequest.url, {
+              referer: param.url,
+              addDelay: true,
             });
+          }
+
+          // Vérifier si bloqué par WAF
+          if (isCloudflareBlocked(response)) {
+            console.log(`   [WARN] WAF blocking detected, skipping parameter...`);
+            break;
           }
 
           // Vérifier les erreurs SQL dans la réponse

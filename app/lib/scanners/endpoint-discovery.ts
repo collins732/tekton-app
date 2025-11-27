@@ -1,5 +1,6 @@
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { browserGet, isCloudflareBlocked } from './http-client';
 
 /**
  * ENDPOINT DISCOVERY - Découverte automatique des endpoints
@@ -191,13 +192,9 @@ async function crawlHTML(target: string): Promise<DiscoveredEndpoint[]> {
   const endpoints: DiscoveredEndpoint[] = [];
 
   try {
-    const response = await axios.get(target, {
-      timeout: 10000,
-      validateStatus: () => true,
-      headers: { 'User-Agent': 'VulnScanner/2.0 Crawler' },
-    });
+    const response = await browserGet(target, { addDelay: false });
 
-    if (response.status !== 200) {
+    if (response.status !== 200 || isCloudflareBlocked(response)) {
       return endpoints;
     }
 
@@ -242,13 +239,9 @@ async function analyzeJavaScript(target: string): Promise<DiscoveredEndpoint[]> 
   const endpoints: DiscoveredEndpoint[] = [];
 
   try {
-    const response = await axios.get(target, {
-      timeout: 10000,
-      validateStatus: () => true,
-      headers: { 'User-Agent': 'VulnScanner/2.0 Crawler' },
-    });
+    const response = await browserGet(target, { addDelay: false });
 
-    if (response.status !== 200) {
+    if (response.status !== 200 || isCloudflareBlocked(response)) {
       return endpoints;
     }
 
@@ -330,13 +323,9 @@ async function analyzeForms(target: string): Promise<DiscoveredEndpoint[]> {
   const endpoints: DiscoveredEndpoint[] = [];
 
   try {
-    const response = await axios.get(target, {
-      timeout: 10000,
-      validateStatus: () => true,
-      headers: { 'User-Agent': 'VulnScanner/2.0 Crawler' },
-    });
+    const response = await browserGet(target, { addDelay: false });
 
-    if (response.status !== 200) {
+    if (response.status !== 200 || isCloudflareBlocked(response)) {
       return endpoints;
     }
 
@@ -389,14 +378,10 @@ async function fuzzCommonEndpoints(target: string): Promise<DiscoveredEndpoint[]
     try {
       const testUrl = `${baseUrl.origin}${path}`;
 
-      const response = await axios.get(testUrl, {
-        timeout: 3000,
-        validateStatus: () => true,
-        headers: { 'User-Agent': 'VulnScanner/2.0 Fuzzer' },
-      });
+      const response = await browserGet(testUrl, { addDelay: true, timeout: 5000 });
 
-      // Si l'endpoint existe (pas 404)
-      if (response.status !== 404) {
+      // Si l'endpoint existe (pas 404) et pas bloqué
+      if (response.status !== 404 && !isCloudflareBlocked(response)) {
         const isAPI = API_PATTERNS.some(p => p.test(path));
 
         endpoints.push({
@@ -406,9 +391,6 @@ async function fuzzCommonEndpoints(target: string): Promise<DiscoveredEndpoint[]
           isAPI,
         });
       }
-
-      // Petit délai pour ne pas surcharger
-      await sleep(100);
 
     } catch (error) {
       // Endpoint n'existe pas ou erreur réseau
@@ -435,13 +417,9 @@ async function checkSitemap(target: string): Promise<DiscoveredEndpoint[]> {
     try {
       const sitemapUrl = `${baseUrl.origin}${path}`;
 
-      const response = await axios.get(sitemapUrl, {
-        timeout: 5000,
-        validateStatus: () => true,
-        headers: { 'User-Agent': 'VulnScanner/2.0 Crawler' },
-      });
+      const response = await browserGet(sitemapUrl, { addDelay: false, timeout: 5000 });
 
-      if (response.status === 200) {
+      if (response.status === 200 && !isCloudflareBlocked(response)) {
         // Parser le XML (simpliste)
         const urls = response.data.match(/<loc>([^<]+)<\/loc>/g) || [];
 

@@ -19,6 +19,9 @@
     "nanoid": "^5.1.6",
     "next": "16.0.3",
     "node-nmap": "^4.0.0",
+    "puppeteer": "^24.31.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "three": "^0.181.2"

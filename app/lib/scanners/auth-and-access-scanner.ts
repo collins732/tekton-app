@@ -734,12 +734,28 @@ async function scanMissingMFA(target: string): Promise<Vulnerability[]> {
 
 /**
  * [A01-1] Teste les vulnérabilités IDOR (Insecure Direct Object Reference)
+ * [OK] VERSION CORRIGÉE: Vérifie que c'est vraiment un profil avec des données utilisateur
  */
 async function scanIDOR(target: string): Promise<Vulnerability[]> {
   const vulnerabilities: Vulnerability[] = [];
 
+  // Patterns qui indiquent des données utilisateur réelles
+  const USER_DATA_PATTERNS = [
+    /"email":/i,
+    /"username":/i,
+    /"phone":/i,
+    /"address":/i,
+    /"first_?name":/i,
+    /"last_?name":/i,
+    /"user_?id":/i,
+    /"balance":/i,
+    /"credit":/i,
+    /"account_?number":/i,
+    /"created_?at":/i,
+    /@[a-z0-9.-]+\.[a-z]{2,}/i, // Email pattern
+  ];
+
   try {
-    // Chercher des endpoints avec des IDs numériques
     const baseUrl = new URL(target);
     const testPaths = [
       '/api/user/1',
@@ -760,34 +776,65 @@ async function scanIDOR(target: string): Promise<Vulnerability[]> {
       try {
         const testUrl = `${baseUrl.origin}${path}`;
 
-        // Tester l'accès à l'ID 1
         const response1 = await axios.get(testUrl, {
           timeout: 5000,
           validateStatus: (status) => status < 500,
-          headers: { 'User-Agent': 'VulnScanner/1.0' },
+          headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
+          maxRedirects: 0, // Ne pas suivre les redirections
         });
 
-        // Si l'endpoint retourne 200 et des données
+        // Vérifier que c'est vraiment une réponse avec des données utilisateur
         if (response1.status === 200 && response1.data) {
+          const data1 = typeof response1.data === 'string' ? response1.data : JSON.stringify(response1.data);
+
+          // [OK] ANTI-FAUX POSITIFS: Vérifier que ce n'est PAS une page d'accueil/générique
+          const isHomepageOrGeneric =
+            data1.length > 50000 || // Trop grand = probablement page complète
+            data1.includes('<!DOCTYPE html>') && data1.includes('<nav') || // Page HTML complète avec nav
+            data1.includes('</footer>') || // Page complète
+            !data1.includes('{'); // Pas de JSON
+
+          if (isHomepageOrGeneric) {
+            continue; // Pas un endpoint d'API, skip
+          }
+
+          // [OK] Vérifier qu'il y a des données utilisateur réelles
+          const hasUserData = USER_DATA_PATTERNS.some(pattern => pattern.test(data1));
+
+          if (!hasUserData) {
+            continue; // Pas de données utilisateur, skip
+          }
+
           // Tester l'accès à l'ID 2
           const testUrl2 = testUrl.replace('/1', '/2');
           const response2 = await axios.get(testUrl2, {
             timeout: 5000,
             validateStatus: (status) => status < 500,
-            headers: { 'User-Agent': 'VulnScanner/1.0' },
+            headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0' },
+            maxRedirects: 0,
           });
 
-          // Si les deux retournent 200, c'est potentiellement un IDOR
           if (response2.status === 200 && response2.data) {
-            vulnerabilities.push({
-              type: 'access-control',
-              severity: 'critical',
-              title: 'IDOR - Insecure Direct Object Reference',
-              description: `The endpoint ${path} allows direct access to resources using predictable IDs without proper authorization checks. This allows users to access other users' data.`,
-              location: testUrl,
-              evidence: `Both ${testUrl} and ${testUrl2} are accessible without authentication`,
-            });
-            break; // Une seule vulnérabilité IDOR suffit
+            const data2 = typeof response2.data === 'string' ? response2.data : JSON.stringify(response2.data);
+
+            // [OK] ANTI-FAUX POSITIFS: Les deux réponses doivent être DIFFÉRENTES
+            // (sinon c'est la même page/redirection)
+            const areDifferent = data1 !== data2 && Math.abs(data1.length - data2.length) < 5000;
+
+            // Et la deuxième doit aussi avoir des données utilisateur
+            const hasUserData2 = USER_DATA_PATTERNS.some(pattern => pattern.test(data2));
+
+            if (areDifferent && hasUserData2) {
+              vulnerabilities.push({
+                type: 'access-control',
+                severity: 'critical',
+                title: 'IDOR - Insecure Direct Object Reference',
+                description: `The endpoint ${path} allows direct access to user resources using predictable IDs. Different user data is returned for ID 1 vs ID 2, confirming unauthorized access to other users' data.`,
+                location: testUrl,
+                evidence: `Both ${testUrl} and ${testUrl2} return different user data without authentication. User data patterns detected.`,
+              });
+              break;
+            }
           }
         }
       } catch (error) {

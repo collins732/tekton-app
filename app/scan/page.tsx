@@ -224,6 +224,19 @@ export default function ScanPage() {
   const displayResults = (scan: ScanResult) => {
     addOutput('');
 
+    // Pages découvertes
+    const discoveredEndpoints = scan.results.discoveredEndpoints || [];
+    if (discoveredEndpoints.length > 0) {
+      addOutput(`▼ CRAWLED PAGES (${discoveredEndpoints.length} discovered)`, 'warning');
+      discoveredEndpoints.slice(0, 5).forEach((url: string, idx: number) => {
+        addOutput(`  ├─ ${url}`, 'info');
+      });
+      if (discoveredEndpoints.length > 5) {
+        addOutput(`  └─ ... and ${discoveredEndpoints.length - 5} more pages`, 'info');
+      }
+      addOutput('');
+    }
+
     // Ports
     if (scan.results.ports && scan.results.ports.length > 0) {
       addOutput('▼ OPEN PORTS', 'warning');
@@ -239,6 +252,15 @@ export default function ScanPage() {
       scan.results.technologies.forEach(tech => {
         const version = tech.version ? ` v${tech.version}` : '';
         addOutput(`  ├─ ${tech.name}${version} [${tech.category}]`, 'info');
+      });
+      addOutput('');
+    }
+
+    // Hidden Files
+    if (scan.results.hiddenFiles && scan.results.hiddenFiles.length > 0) {
+      addOutput('▼ SENSITIVE FILES FOUND', 'error');
+      scan.results.hiddenFiles.forEach((file: any) => {
+        addOutput(`  ├─ ${file.path} [${file.severity.toUpperCase()}]`, 'error');
       });
       addOutput('');
     }
