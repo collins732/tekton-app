@@ -190,13 +190,20 @@ export default function ScanPage() {
       addOutput('[*] Scan started successfully', 'success');
       addOutput('');
 
+      // Track last step to avoid duplicates
+      let lastStep = '';
+      let lastProgress = 0;
+
       // Polling pour suivre la progression
       const interval = setInterval(async () => {
         const statusResponse = await fetch(`/api/scan/${scanId}`);
         const scan: ScanResult = await statusResponse.json();
 
-        if (scan.currentStep) {
+        // Only add output if step changed or progress increased significantly
+        if (scan.currentStep && (scan.currentStep !== lastStep || scan.progress >= lastProgress + 10)) {
           addOutput(`[${scan.progress}%] ${scan.currentStep}`, 'warning');
+          lastStep = scan.currentStep;
+          lastProgress = scan.progress;
         }
 
         if (scan.status === 'completed' || scan.status === 'failed') {
