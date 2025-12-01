@@ -1,0 +1,163 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - develop
+      - staging
+      - main
+  pull_request:
+    branches:
+      - develop
+      - staging
+      - main
+
+env:
+  ACR_NAME: acrtektondev
+  ACR_LOGIN_SERVER: acrtektondev.azurecr.io
+  IMAGE_NAME: tekton-app
+  AKS_CLUSTER: aks-tekton-dev
+  AKS_RESOURCE_GROUP: rg-tekton-dev
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Run linter
+        run: npm run lint --if-present
+
+      - name: Run tests
+        run: npm test --if-present
+
+      - name: Build application
+        run: npm run build
+
+  deploy-dev:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/develop' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: dev
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }} \
+                       -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:dev-${{ github.sha }}
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:latest
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ env.AKS_RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER }}
+
+      - name: Deploy to Dev
+        run: |
+          kubectl rollout restart deployment/tekton-app -n tekton-dev
+          kubectl rollout status deployment/tekton-app -n tekton-dev --timeout=300s
+
+  deploy-staging:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/staging' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+        with:
+          repository: collins732/tekton-infrastructure
+          path: infrastructure
+          ref: staging
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:staging-${{ github.sha }} \
+                       -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:staging .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:staging-${{ github.sha }}
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:staging
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ env.AKS_RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER }}
+
+      - name: Create namespace if not exists
+        run: kubectl create namespace tekton-staging --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to Staging
+        run: |
+          kubectl apply -k infrastructure/kubernetes/overlays/staging
+          kubectl rollout status deployment/tekton-app -n tekton-staging --timeout=300s
+
+  deploy-prod:
+    needs: build-and-test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Checkout infrastructure repo
+        uses: actions/checkout@v4
+        with:
+          repository: collins732/tekton-infrastructure
+          path: infrastructure
+          ref: main
+
+      - name: Login to Azure
+        uses: azure/login@v1
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Login to ACR
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:prod-${{ github.sha }} \
+                       -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:prod \
+                       -t ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:v${{ github.run_number }} .
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:prod-${{ github.sha }}
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:prod
+          docker push ${{ env.ACR_LOGIN_SERVER }}/${{ env.IMAGE_NAME }}:v${{ github.run_number }}
+
+      - name: Get AKS credentials
+        run: az aks get-credentials --resource-group ${{ env.AKS_RESOURCE_GROUP }} --name ${{ env.AKS_CLUSTER }}
+
+      - name: Create namespace if not exists
+        run: kubectl create namespace tekton-prod --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy to Production
+        run: |
+          kubectl apply -k infrastructure/kubernetes/overlays/prod
+          kubectl rollout status deployment/tekton-app -n tekton-prod --timeout=300s
