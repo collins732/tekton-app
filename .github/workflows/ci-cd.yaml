@@ -11,6 +11,17 @@ on:
       - develop
       - staging
       - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - staging
+          - production
 
 env:
   ACR_NAME: acrtektondev
@@ -118,11 +129,14 @@ jobs:
           kubectl apply -k infrastructure/kubernetes/overlays/staging
           kubectl rollout status deployment/tekton-app -n tekton-staging --timeout=300s
 
+  # Production deployment requires manual approval
   deploy-prod:
     needs: build-and-test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
-    environment: production
+    environment:
+      name: production
+      url: http://tekton-prod.francecentral.cloudapp.azure.com
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
