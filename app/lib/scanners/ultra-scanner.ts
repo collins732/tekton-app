@@ -722,7 +722,7 @@ export async function ultraScanSQLi(target: string, forms: any[]): Promise<Vulne
     const params = Array.from(url.searchParams.keys());
 
     for (const param of params) {
-      for (const payload of allPayloads.slice(0, 15)) {
+      for (const payload of timeBasedPayloads.slice(0, 15)) {
         try {
           const testUrl = new URL(target);
           testUrl.searchParams.set(param, payload);

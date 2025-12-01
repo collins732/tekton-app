@@ -7,7 +7,7 @@ const SESSION_COOKIE_NAME = 'tekton_session';
 const publicRoutes = ['/', '/login', '/register', '/pricing'];
 
 // API routes that don't require authentication
-const publicApiRoutes = ['/api/auth/login', '/api/auth/register'];
+const publicApiRoutes = ['/api/auth/login', '/api/auth/register', '/api/health'];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
