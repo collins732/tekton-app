@@ -1,8 +1,27 @@
 import Database from 'better-sqlite3';
 import path from 'path';
+import fs from 'fs';
 import { ScanResult } from './types';
 
-const dbPath = path.join(process.cwd(), 'tekton.db');
+// Determine database location:
+// - Use DB_PATH env var if set (for custom paths)
+// - Use /tmp in Linux containers (dev, staging, prod on Kubernetes)
+// - Use project root on Windows/Mac (local development)
+const isLinuxContainer = process.platform === 'linux' && !process.env.DB_PATH;
+const dataDir = process.env.DB_PATH || (isLinuxContainer ? '/tmp' : process.cwd());
+const dbPath = path.join(dataDir, 'tekton.db');
+
+console.log(`[DB] Using database at: ${dbPath} (platform: ${process.platform}, NODE_ENV: ${process.env.NODE_ENV})`);
+
+// Ensure directory exists and is writable
+try {
+  if (!fs.existsSync(dataDir)) {
+    fs.mkdirSync(dataDir, { recursive: true });
+  }
+} catch (e) {
+  console.error('Failed to create data directory:', e);
+}
+
 const db = new Database(dbPath);
 
 // Helper function to check if column exists
