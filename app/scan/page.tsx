@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import TestOption from '@/components/TestOption';
+import { motion, AnimatePresence } from 'framer-motion';
 import LegalWarningModal from '@/components/LegalWarningModal';
 import { ScanResult } from '../lib/types';
 
@@ -14,6 +14,8 @@ export default function ScanPage() {
   const [scanResult, setScanResult] = useState<ScanResult | null>(null);
   const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
   const terminalRef = useRef<HTMLDivElement>(null);
+  const [currentStep, setCurrentStep] = useState('');
+  const [progress, setProgress] = useState(0);
 
   // User authentication and data
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -25,6 +27,9 @@ export default function ScanPage() {
   const [hasAcceptedTerms, setHasAcceptedTerms] = useState(false);
   const [pendingScan, setPendingScan] = useState(false);
 
+  // Error state
+  const [errorMessage, setErrorMessage] = useState('');
+
   // Check authentication on page load
   useEffect(() => {
     const checkAuth = async () => {
@@ -33,7 +38,6 @@ export default function ScanPage() {
         const data = await response.json();
 
         if (!data.authenticated || !data.user) {
-          // Redirect to login if not authenticated
           router.push('/login');
           return;
         }
@@ -51,63 +55,13 @@ export default function ScanPage() {
     checkAuth();
   }, [router]);
 
-  // Check if user has accepted terms in this session
+  // Check if user has accepted terms
   useEffect(() => {
     const termsAccepted = localStorage.getItem('tekton_terms_accepted');
-    console.log('[DEBUG] Terms accepted from localStorage:', termsAccepted);
     if (termsAccepted === 'true') {
       setHasAcceptedTerms(true);
-    } else {
-      setHasAcceptedTerms(false);
     }
   }, []);
-
-  // Test selection state
-  const [selectedTests, setSelectedTests] = useState({
-    portScan: true,
-    xss: true,
-    sqli: false,
-    deepScan: false
-  });
-
-  const testOptions = [
-    {
-      id: 'portScan',
-      name: 'PORT SCAN',
-      description: 'Detect open ports and services',
-      cost: 5,
-      locked: false
-    },
-    {
-      id: 'xss',
-      name: 'XSS DETECTION',
-      description: 'Find Cross-Site Scripting vulnerabilities',
-      cost: 15,
-      locked: false
-    },
-    {
-      id: 'sqli',
-      name: 'SQLI TESTING',
-      description: 'Identify SQL injection points',
-      cost: 20,
-      locked: user?.plan === 'BASIC',
-      lockReason: 'PRO ONLY'
-    },
-    {
-      id: 'deepScan',
-      name: 'DEEP SCAN',
-      description: 'Comprehensive vulnerability analysis',
-      cost: 100,
-      locked: user?.plan !== 'EXPERT',
-      lockReason: 'EXPERT ONLY'
-    }
-  ];
-
-  const totalCost = testOptions.reduce((sum, test) => {
-    return selectedTests[test.id as keyof typeof selectedTests] ? sum + test.cost : sum;
-  }, 0);
-
-  const hasInsufficientTokens = user ? totalCost > user.tokens : true;
 
   // Auto-scroll terminal
   useEffect(() => {
@@ -127,12 +81,10 @@ export default function ScanPage() {
   };
 
   const handleAcceptTerms = () => {
-    // Store acceptance in localStorage
     localStorage.setItem('tekton_terms_accepted', 'true');
     setHasAcceptedTerms(true);
     setShowLegalWarning(false);
 
-    // If there was a pending scan, execute it now
     if (pendingScan) {
       setPendingScan(false);
       executeScan();
@@ -145,17 +97,7 @@ export default function ScanPage() {
       return;
     }
 
-    if (hasInsufficientTokens) {
-      addOutput('[ERROR] Insufficient tokens. Please upgrade your plan or buy more tokens.', 'error');
-      return;
-    }
-
-    // Check if user has accepted terms
-    console.log('[DEBUG] hasAcceptedTerms:', hasAcceptedTerms);
-    console.log('[DEBUG] showLegalWarning:', showLegalWarning);
-
     if (!hasAcceptedTerms) {
-      console.log('[DEBUG] Showing legal warning modal...');
       setPendingScan(true);
       setShowLegalWarning(true);
       return;
@@ -168,24 +110,44 @@ export default function ScanPage() {
     setScanning(true);
     setScanResult(null);
     setTerminalOutput([]);
+    setCurrentStep('Initializing scan...');
+    setProgress(0);
+    setErrorMessage('');
 
     addOutput('╔══════════════════════════════════════════════════════╗', 'warning');
     addOutput('║            TEKTON VULNERABILITY SCANNER              ║', 'warning');
     addOutput('╚══════════════════════════════════════════════════════╝', 'warning');
     addOutput('');
     addOutput(`[*] Target: ${url}`, 'info');
-    addOutput(`[*] Cost: ${totalCost} tokens`, 'info');
     addOutput('[*] Initializing scan...', 'info');
 
     try {
-      // Lancer le scan
       const response = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, cost: totalCost }),
+        body: JSON.stringify({ url }),
       });
 
-      const { scanId } = await response.json();
+      if (!response.ok) {
+        const error = await response.json();
+        if (response.status === 402) {
+          addOutput('[!] INSUFFICIENT TOKENS', 'error');
+          addOutput(`[!] Required: 40 tokens | Available: ${user?.tokens || 0} tokens`, 'error');
+          addOutput('[!] Please upgrade your plan to continue scanning', 'error');
+          setScanning(false);
+          setCurrentStep('');
+          return;
+        }
+        throw new Error(error.message || 'Failed to start scan');
+      }
+
+      const data = await response.json();
+      const scanId = data.scanId;
+
+      if (!scanId) {
+        throw new Error('No scan ID received');
+      }
+
       addOutput(`[+] Scan ID: ${scanId}`, 'success');
       addOutput('[*] Scan started successfully', 'success');
       addOutput('');
@@ -194,37 +156,61 @@ export default function ScanPage() {
       let lastStep = '';
       let lastProgress = 0;
 
-      // Polling pour suivre la progression
+      // Polling for progress
       const interval = setInterval(async () => {
-        const statusResponse = await fetch(`/api/scan/${scanId}`);
-        const scan: ScanResult = await statusResponse.json();
+        try {
+          const statusResponse = await fetch(`/api/scan/${scanId}`);
+          if (!statusResponse.ok) {
+            clearInterval(interval);
+            setScanning(false);
+            addOutput('[!] Error fetching scan status', 'error');
+            setCurrentStep('');
+            return;
+          }
 
-        // Only add output if step changed or progress increased significantly
-        if (scan.currentStep && (scan.currentStep !== lastStep || scan.progress >= lastProgress + 10)) {
-          addOutput(`[${scan.progress}%] ${scan.currentStep}`, 'warning');
-          lastStep = scan.currentStep;
-          lastProgress = scan.progress;
-        }
+          const scan: ScanResult = await statusResponse.json();
 
-        if (scan.status === 'completed' || scan.status === 'failed') {
+          // Update progress
+          if (scan.currentStep) {
+            setCurrentStep(scan.currentStep);
+            setProgress(scan.progress);
+          }
+
+          // Only add output if step changed or progress increased significantly
+          if (scan.currentStep && (scan.currentStep !== lastStep || scan.progress >= lastProgress + 10)) {
+            addOutput(`[${scan.progress}%] ${scan.currentStep}`, 'warning');
+            lastStep = scan.currentStep;
+            lastProgress = scan.progress;
+          }
+
+          if (scan.status === 'completed' || scan.status === 'failed') {
+            clearInterval(interval);
+            setScanning(false);
+            setScanResult(scan);
+            setCurrentStep('');
+            setProgress(100);
+
+            if (scan.status === 'completed') {
+              addOutput('');
+              addOutput('═══════════════════ SCAN COMPLETED ═══════════════════', 'success');
+              displayResults(scan);
+            } else {
+              addOutput('');
+              addOutput('[!] Scan failed: ' + scan.error, 'error');
+            }
+          }
+        } catch (err) {
           clearInterval(interval);
           setScanning(false);
-          setScanResult(scan);
-
-          if (scan.status === 'completed') {
-            addOutput('');
-            addOutput('═══════════════════ SCAN COMPLETED ═══════════════════', 'success');
-            displayResults(scan);
-          } else {
-            addOutput('');
-            addOutput('[!] Scan failed: ' + scan.error, 'error');
-          }
+          addOutput('[!] Error during scan', 'error');
+          setCurrentStep('');
         }
       }, 2000);
 
     } catch (error) {
-      addOutput('[!] Error: ' + (error as Error).message, 'error');
       setScanning(false);
+      addOutput('[!] Error: ' + (error as Error).message, 'error');
+      setCurrentStep('');
     }
   };
 
@@ -301,7 +287,6 @@ export default function ScanPage() {
     addOutput('═══════════════════════════════════════════════════════', 'success');
   };
 
-  // Show loading state while checking authentication
   if (loading || !isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center">
@@ -316,11 +301,22 @@ export default function ScanPage() {
   return (
     <div className="min-h-screen p-8">
       <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <h1 className="text-5xl md:text-6xl font-bold mb-4 glow-purple">
+            [VULNERABILITY SCANNER]
+          </h1>
+          <p className="text-xl opacity-70">
+            Comprehensive security analysis for web applications
+          </p>
+        </div>
 
-        {/* Scan Configuration Section */}
-        <div className="terminal-border bg-black/80 backdrop-blur p-6 mb-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold glow-purple">SELECT SCAN TYPES</h2>
+        {/* URL Input Section */}
+        <div className="terminal-border p-6 bg-black/50 backdrop-blur mb-6">
+          <div className="flex justify-between items-center mb-2">
+            <label className="text-sm glow-purple">
+              {'> ENTER TARGET URL:'}
+            </label>
             {hasAcceptedTerms && (
               <button
                 onClick={() => {
@@ -334,71 +330,6 @@ export default function ScanPage() {
               </button>
             )}
           </div>
-
-          {/* Test Options Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            {testOptions.map((test) => (
-              <TestOption
-                key={test.id}
-                name={test.name}
-                description={test.description}
-                cost={test.cost}
-                selected={selectedTests[test.id as keyof typeof selectedTests]}
-                locked={test.locked}
-                lockReason={test.lockReason}
-                onToggle={() => {
-                  if (!test.locked) {
-                    setSelectedTests(prev => ({
-                      ...prev,
-                      [test.id]: !prev[test.id as keyof typeof selectedTests]
-                    }));
-                  }
-                }}
-              />
-            ))}
-          </div>
-
-          {/* Total Cost Display */}
-          <div className="terminal-border bg-purple-900/20 p-4 mb-4">
-            <div className="flex items-center justify-between">
-              <span className="text-lg font-bold">TOTAL COST:</span>
-              <div className="flex items-center gap-2">
-                <span className="text-3xl font-bold glow-purple">{totalCost}</span>
-                <span className="text-purple-400 text-2xl">⚡</span>
-                <span className="text-sm opacity-50">tokens</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Insufficient Tokens Warning */}
-          {hasInsufficientTokens && (
-            <div className="terminal-border border-red-600 bg-red-900/20 p-4 mb-4 animate-pulse">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <span className="text-2xl">⚠</span>
-                  <div>
-                    <div className="font-bold text-red-400">INSUFFICIENT TOKENS</div>
-                    <div className="text-xs opacity-70">
-                      You need {totalCost - (user?.tokens || 0)} more tokens to run this scan
-                    </div>
-                  </div>
-                </div>
-                <Link
-                  href="/pricing"
-                  className="px-4 py-2 bg-red-600 hover:bg-red-500 border-2 border-red-400 font-bold transition-all"
-                >
-                  [UPGRADE PLAN]
-                </Link>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* URL Input Section */}
-        <div className="terminal-border p-6 bg-black/50 backdrop-blur mb-6">
-          <label className="block mb-2 text-sm glow-purple">
-            {'> ENTER TARGET URL:'}
-          </label>
           <div className="flex gap-4">
             <input
               type="text"
@@ -413,7 +344,7 @@ export default function ScanPage() {
             />
             <button
               onClick={startScan}
-              disabled={scanning || !url || hasInsufficientTokens}
+              disabled={scanning || !url}
               className="px-8 py-3 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600
                        disabled:cursor-not-allowed border-2 border-purple-400
                        font-bold transition-all glow-purple"
@@ -421,7 +352,79 @@ export default function ScanPage() {
               {scanning ? '[SCANNING...]' : '[START SCAN]'}
             </button>
           </div>
+
+          {/* Example URLs */}
+          <div className="mt-4 flex items-center gap-4 text-sm">
+            <span className="opacity-50">Test targets:</span>
+            {['http://testphp.vulnweb.com', 'http://example.com'].map((exampleUrl) => (
+              <button
+                key={exampleUrl}
+                onClick={() => setUrl(exampleUrl)}
+                className="text-purple-400 hover:text-purple-300 transition-colors font-mono"
+              >
+                {exampleUrl}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* Scanning Progress - Keep this as is since user likes it */}
+        <AnimatePresence>
+          {scanning && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="mb-12"
+            >
+              <div className="terminal-border bg-black/80 backdrop-blur p-8">
+                <div className="space-y-6">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-lg font-bold glow-purple">SCANNING PROGRESS</span>
+                      <span className="text-purple-400 font-bold text-2xl">{progress}%</span>
+                    </div>
+                    <div className="w-full bg-gray-900 rounded h-4 overflow-hidden border border-purple-600">
+                      <motion.div
+                        className="h-full bg-gradient-to-r from-purple-600 to-pink-600"
+                        initial={{ width: 0 }}
+                        animate={{ width: `${progress}%` }}
+                        transition={{ duration: 0.5 }}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-purple-400 font-mono">{currentStep}</p>
+                  </div>
+
+                  {/* Live scan stats */}
+                  <div className="grid grid-cols-3 gap-4 pt-4 border-t border-purple-600">
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-purple-400">
+                        {Math.floor(progress / 25)}
+                      </div>
+                      <div className="text-xs opacity-50">Modules Complete</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-pink-400">
+                        {Math.floor(progress * 1.2)}
+                      </div>
+                      <div className="text-xs opacity-50">Checks Performed</div>
+                    </div>
+                    <div className="text-center">
+                      <div className="text-3xl font-bold text-green-400">
+                        {Math.floor(progress / 10)}s
+                      </div>
+                      <div className="text-xs opacity-50">Time Elapsed</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         {/* Terminal Output */}
         <div className="terminal-border bg-black/80 backdrop-blur">
@@ -442,9 +445,9 @@ export default function ScanPage() {
           >
             {terminalOutput.length === 0 ? (
               <div className="text-gray-500 flex flex-col items-center justify-center h-full">
-                <span className="text-6xl mb-4">⚡</span>
+                <span className="text-6xl mb-4 animate-pulse">⚡</span>
                 <span>Waiting for scan to start...</span>
-                <span className="text-xs mt-2 opacity-50">Configure your scan and click [START SCAN]</span>
+                <span className="text-xs mt-2 opacity-50">Enter a URL and click [START SCAN]</span>
               </div>
             ) : (
               terminalOutput.map((line, index) => (
@@ -460,6 +463,30 @@ export default function ScanPage() {
             )}
           </div>
         </div>
+
+        {/* Action Buttons */}
+        {scanResult && scanResult.status === 'completed' && (
+          <div className="mt-8 flex items-center justify-center gap-4">
+            <button
+              onClick={() => {
+                setScanResult(null);
+                setTerminalOutput([]);
+                setUrl('');
+              }}
+              className="px-6 py-3 bg-gray-800 hover:bg-gray-700 border-2 border-gray-600
+                       font-bold transition-all"
+            >
+              [NEW SCAN]
+            </button>
+            <Link
+              href="/pricing"
+              className="px-6 py-3 bg-purple-600 hover:bg-purple-500 border-2 border-purple-400
+                       font-bold transition-all glow-purple"
+            >
+              [UPGRADE FOR MORE SCANS]
+            </Link>
+          </div>
+        )}
 
         {/* Footer */}
         <div className="mt-8 text-center text-xs opacity-50">

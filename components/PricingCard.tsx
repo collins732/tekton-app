@@ -1,5 +1,7 @@
 'use client';
 
+import { useRouter } from 'next/navigation';
+
 interface PricingCardProps {
   name: string;
   price: string;
@@ -21,6 +23,16 @@ export default function PricingCard({
   popular = false,
   accentColor = 'border-purple-400'
 }: PricingCardProps) {
+  const router = useRouter();
+
+  const handleSelectPlan = () => {
+    const params = new URLSearchParams({
+      plan: name,
+      price: price,
+      tokens: tokens.toString()
+    });
+    router.push(`/payment?${params.toString()}`);
+  };
   return (
     <div className={`${popular ? 'terminal-border-strong' : 'terminal-border'} bg-black/80 backdrop-blur p-6 relative transition-all hover:scale-105`}>
       {/* Badge */}
@@ -29,11 +41,6 @@ export default function PricingCard({
           {badge}
         </div>
       )}
-
-      {/* 3D Icon Placeholder */}
-      <div className="placeholder-3d-icon bg-purple-900/20 h-32 w-32 mx-auto mb-4 flex items-center justify-center terminal-border">
-        <span className="text-sm opacity-50">[3D ICON]</span>
-      </div>
 
       {/* Plan Name */}
       <h3 className="text-3xl font-bold text-center mb-2 glow-purple">{name}</h3>
@@ -69,8 +76,8 @@ export default function PricingCard({
 
       {/* CTA Button */}
       <button
-        onClick={() => console.log(`TODO: Select ${name} plan`)}
-        className="w-full py-3 bg-purple-600 hover:bg-purple-500 border-2 border-purple-400 font-bold transition-all glow-purple"
+        onClick={handleSelectPlan}
+        className="w-full py-3 bg-purple-600 hover:bg-purple-500 border-2 border-purple-400 font-bold transition-all glow-purple cursor-pointer"
       >
         [SELECT PLAN]
       </button>

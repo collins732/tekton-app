@@ -56,26 +56,6 @@ export default function PricingPage() {
         '~50-70 complete scans/month'
       ],
       accentColor: 'border-purple-400'
-    },
-    {
-      name: 'ENTERPRISE',
-      price: 'Custom',
-      tokens: 99999,
-      badge: 'BEST VALUE',
-      badgeColor: 'bg-yellow-600',
-      features: [
-        'Unlimited tokens',
-        'On-premise deployment',
-        'Complete white-label',
-        'Multi-users with roles',
-        'SSO / SAML integration',
-        '99.9% SLA',
-        '24/7 support',
-        'Compliance reports',
-        'Custom scanners',
-        'Dedicated account manager'
-      ],
-      accentColor: 'border-yellow-400'
     }
   ];
 
@@ -150,21 +130,6 @@ export default function PricingPage() {
           </div>
         </div>
 
-        {/* Enterprise CTA */}
-        <div className="mt-16 terminal-border bg-purple-900/20 backdrop-blur p-12 text-center">
-          <h2 className="text-4xl font-bold mb-4 glow-purple">
-            NEED ENTERPRISE SOLUTIONS?
-          </h2>
-          <p className="text-lg opacity-70 mb-6">
-            Custom plans available for large teams and organizations
-          </p>
-          <button
-            onClick={() => console.log('TODO: Contact sales')}
-            className="px-8 py-3 bg-purple-600 hover:bg-purple-500 border-2 border-purple-400 font-bold transition-all"
-          >
-            [CONTACT SALES]
-          </button>
-        </div>
       </div>
     </div>
   );
