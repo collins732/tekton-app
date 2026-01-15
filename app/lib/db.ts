@@ -210,6 +210,15 @@ db.exec(`
     FOREIGN KEY (user_id) REFERENCES users(user_id)
   );
 
+  -- Sessions table
+  CREATE TABLE IF NOT EXISTS sessions (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    FOREIGN KEY (user_id) REFERENCES users(user_id)
+  );
+
   -- Create indexes for better performance
   CREATE INDEX IF NOT EXISTS idx_scans_user ON scans(user_id);
   CREATE INDEX IF NOT EXISTS idx_scans_status ON scans(status);
@@ -219,6 +228,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_activity_created ON activity_feed(created_at DESC);
   CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);
   CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(read);
+  CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
 `);
 
 // Migrations: Add missing columns to existing tables
@@ -789,7 +800,48 @@ export function getDashboardStats(userId: string) {
   };
 }
 
+// ========== SESSION FUNCTIONS ==========
+
+export function createSessionInDb(sessionId: string, userId: string, expiresAt: number): void {
+  const stmt = db.prepare(`
+    INSERT INTO sessions (session_id, user_id, expires_at, created_at)
+    VALUES (?, ?, ?, ?)
+  `);
+  stmt.run(sessionId, userId, expiresAt, Date.now());
+}
+
+export function getSessionFromDb(sessionId: string): { userId: string; expiresAt: number } | null {
+  const stmt = db.prepare('SELECT user_id, expires_at FROM sessions WHERE session_id = ?');
+  const row = stmt.get(sessionId) as any;
+
+  if (!row) return null;
+
+  // Check if session expired
+  if (Date.now() > row.expires_at) {
+    deleteSessionFromDb(sessionId);
+    return null;
+  }
+
+  return {
+    userId: row.user_id,
+    expiresAt: row.expires_at
+  };
+}
+
+export function deleteSessionFromDb(sessionId: string): void {
+  const stmt = db.prepare('DELETE FROM sessions WHERE session_id = ?');
+  stmt.run(sessionId);
+}
+
+export function cleanExpiredSessions(): void {
+  const stmt = db.prepare('DELETE FROM sessions WHERE expires_at < ?');
+  stmt.run(Date.now());
+}
+
 // Initialize achievements on startup
 initializeAchievements();
+
+// Clean expired sessions on startup
+cleanExpiredSessions();
 
 export default db;
