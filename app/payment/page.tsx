@@ -1,7 +1,7 @@
 'use client';
 
 import { useSearchParams, useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Suspense } from 'react';
 
 interface PlanDetails {
   name: string;
@@ -9,7 +9,7 @@ interface PlanDetails {
   tokens: number;
 }
 
-export default function PaymentPage() {
+function PaymentContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [planDetails, setPlanDetails] = useState<PlanDetails | null>(null);
@@ -196,5 +196,17 @@ export default function PaymentPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function PaymentPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="text-2xl animate-pulse">Loading...</div>
+      </div>
+    }>
+      <PaymentContent />
+    </Suspense>
   );
 }
