@@ -12,6 +12,7 @@
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.4.0",
     "@splinetool/react-spline": "^4.1.0",
+    "@splinetool/runtime": "^1.12.35",
     "@types/three": "^0.181.0",
     "axios": "^1.13.2",
     "better-sqlite3": "^12.4.1",
